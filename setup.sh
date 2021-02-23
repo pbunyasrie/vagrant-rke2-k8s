@@ -174,6 +174,12 @@ then
 	sed -i "s/#   value: \"192.168.0.0\/16\"/  value: \"${POD_SUBNET/\//\/}\"/g" calico.yaml
 	kubectl apply -f calico.yaml
 
+	# Install kubectl calicoctl plugin
+	cd /usr/local/bin
+	curl -o kubectl-calico -L  https://github.com/projectcalico/calicoctl/releases/download/v3.18.0/calicoctl
+	chmod +x kubectl-calico
+	# kubectl calico -h
+
 	# Keep showing status until everything is running
 	until [[ $( kubectl get pods --field-selector=status.phase!=Running --all-namespaces 2>&1 ) == "No resources found" ]]
 	do 
