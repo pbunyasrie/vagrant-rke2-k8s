@@ -168,7 +168,8 @@ then
 	kubectl describe node | grep -i taint
 
 	# Setup Calico
-	wget https://docs.projectcalico.org/manifests/calico.yaml
+	# see https://docs.projectcalico.org/getting-started/kubernetes/self-managed-onprem/onpremises#install-calico-with-kubernetes-api-datastore-50-nodes-or-less
+	wget https://docs.projectcalico.org/archive/v3.18/manifests/calico.yaml
 	sed -i "s/# - name: CALICO_IPV4POOL_CIDR/- name: CALICO_IPV4POOL_CIDR/g" calico.yaml
 	sed -i "s/#   value: \"192.168.0.0\/16\"/  value: \"${POD_SUBNET/\//\/}\"/g" calico.yaml
 	kubectl apply -f calico.yaml
