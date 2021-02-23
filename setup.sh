@@ -41,7 +41,12 @@ EOF
 
 dnf -y update --nobest && yum -y upgrade --nobest
 
-dnf install -y wget curl conntrack-tools vim net-tools telnet tcpdump bind-utils kmod nmap-ncat
+dnf install -y wget curl conntrack-tools vim net-tools telnet tcpdump bind-utils kmod nmap-ncat python3
+ln -s /bin/python3 /bin/python
+
+dnf install https://dl.fedoraproject.org/pub/epel/epel-release-latest-8.noarch.rpm -y
+dnf install htop -y
+
 
 # Install and configure firewall
 # See https://kubernetes.io/docs/setup/production-environment/tools/kubeadm/install-kubeadm/
@@ -151,6 +156,10 @@ systemctl start kubelet
 source <(kubectl completion bash)
 echo "source <(kubectl completion bash)" >> ~/.bashrc
 echo "source <(kubeadm completion bash)" >> ~/.bashrc
+echo "export PATH=$PATH:/usr/local/sbin" >> ~/.bashrc
+echo "export PATH=$HOME/.gloo/bin:$PATH" >> ~/.bashrc
+export PATH=$HOME/.gloo/bin:$PATH
+export PATH=$PATH:/usr/local/sbin
 
 # INITIAL MASTER SETUP ONLY
 if [[ $THIS_NUM -eq 1 && $NODE_TYPE == "master" ]]
@@ -180,6 +189,15 @@ then
 	chmod +x kubectl-calico
 	# kubectl calico -h
 
+	# Install Helm
+	echo "Install helm"
+	wget https://get.helm.sh/helm-v3.5.2-linux-amd64.tar.gz
+	tar -zxvf helm-v3.5.2-linux-amd64.tar.gz
+	mv linux-amd64/helm /usr/local/bin/helm
+	helm repo add stable https://charts.helm.sh/stable
+	helm repo add gloo https://storage.googleapis.com/solo-public-helm
+	helm repo update
+
 	# Keep showing status until everything is running
 	until [[ $( kubectl get pods --field-selector=status.phase!=Running --all-namespaces 2>&1 ) == "No resources found" ]]
 	do 
@@ -187,6 +205,18 @@ then
 	    sleep 10
 	done
 	kubectl taint nodes $(hostname) node.kubernetes.io/not-ready:NoSchedule
+
+	# Install Gloo ingress and API gateway
+	# NOTE: Currently not working in Vagrant for some reason
+	# see https://medium.com/solo-io/api-gateways-are-going-through-an-identity-crisis-d1d833a313d7
+	# https://docs.solo.io/gloo-edge/latest/installation/gateway/kubernetes/#verify-your-installation
+	# https://docs.solo.io/gloo-edge/latest/guides/traffic_management/hello_world/
+	kubectl create namespace gloo-system
+	helm install gloo gloo/gloo --namespace gloo-system
+	kubectl get all -n gloo-system
+	curl -sL https://run.solo.io/gloo/install  | sh
+	glooctl check
+
 fi
 echo "Finished provisioning $(hostname)!"
 if [[ $THIS_NUM -eq 1 && $NODE_TYPE == "master" ]]

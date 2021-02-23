@@ -24,7 +24,7 @@ Vagrant.configure("2") do |config|
       ip = "#{$kube_subnet_start}.#{i+100}"
       master.vm.network "private_network", ip: ip
       master.vm.provider "virtualbox" do |vb|
-        vb.memory = "2048"
+        vb.memory = "4096"
         vb.cpus = 2
         vb.name = "master-#{i}"
       end
