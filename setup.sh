@@ -194,7 +194,6 @@ then
 	tar -zxvf helm-v3.5.2-linux-amd64.tar.gz
 	mv linux-amd64/helm /usr/local/bin/helm
 	helm repo add stable https://charts.helm.sh/stable
-	helm repo add gloo https://storage.googleapis.com/solo-public-helm
 	helm repo update
 
 	# Keep showing status until everything is running
@@ -205,16 +204,18 @@ then
 	done
 	kubectl taint nodes $(hostname) node.kubernetes.io/not-ready:NoSchedule
 
-	# Install Gloo ingress and API gateway
-	# NOTE: Currently not working in Vagrant for some reason
-	# see https://medium.com/solo-io/api-gateways-are-going-through-an-identity-crisis-d1d833a313d7
-	# https://docs.solo.io/gloo-edge/latest/installation/gateway/kubernetes/#verify-your-installation
-	# https://docs.solo.io/gloo-edge/latest/guides/traffic_management/hello_world/
-	kubectl create namespace gloo-system
-	helm install gloo gloo/gloo --namespace gloo-system
-	kubectl get all -n gloo-system
-	curl -sL https://run.solo.io/gloo/install  | sh
-	glooctl check
+	## Install Gloo ingress and API gateway
+	## NOTE: Currently not working in Vagrant for some reason, so disabled
+	## see https://medium.com/solo-io/api-gateways-are-going-through-an-identity-crisis-d1d833a313d7
+	## https://docs.solo.io/gloo-edge/latest/installation/gateway/kubernetes/#verify-your-installation
+	## https://docs.solo.io/gloo-edge/latest/guides/traffic_management/hello_world/
+	# helm repo add gloo https://storage.googleapis.com/solo-public-helm
+	# helm repo update
+	# kubectl create namespace gloo-system
+	# helm install gloo gloo/gloo --namespace gloo-system
+	# kubectl get all -n gloo-system
+	# curl -sL https://run.solo.io/gloo/install  | sh
+	# glooctl check
 
 	# Install haproxy ingress
 	# see https://www.haproxy.com/blog/use-helm-to-install-the-haproxy-kubernetes-ingress-controller/
