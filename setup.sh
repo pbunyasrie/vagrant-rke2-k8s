@@ -63,6 +63,7 @@ fi
 firewall-cmd --permanent --add-port=30000-32767/tcp # NodePort services, used by all
 # both control plane and worker nodes
 firewall-cmd --permanent --add-port=10250/tcp # kubelet API; used by self, control plane
+firewall-cmd --permanent --add-port=179/tcp # BGP (Calico)
 
 
 firewall-cmd --permanent --add-port=10255/tcp 
@@ -156,16 +157,14 @@ systemctl start kubelet
 source <(kubectl completion bash)
 echo "source <(kubectl completion bash)" >> ~/.bashrc
 echo "source <(kubeadm completion bash)" >> ~/.bashrc
-echo "export PATH=$PATH:/usr/local/sbin" >> ~/.bashrc
-echo "export PATH=$HOME/.gloo/bin:$PATH" >> ~/.bashrc
-export PATH=$HOME/.gloo/bin:$PATH
-export PATH=$PATH:/usr/local/sbin
+echo "export PATH=$HOME/.gloo/bin:/usr/local/sbin:$PATH" >> ~/.bashrc
+export PATH=$HOME/.gloo/bin:/usr/local/bin:$PATH
 
 # INITIAL MASTER SETUP ONLY
 if [[ $THIS_NUM -eq 1 && $NODE_TYPE == "master" ]]
 then
 	# kubeadm init --help for more information
-	kubeadm init --apiserver-cert-extra-sans vagrant-k8s --apiserver-advertise-address $THIS_IP --control-plane-endpoint $CONTROL_PLANE_ENDPOINT --upload-certs --pod-network-cidr $POD_SUBNET | tee /tmp/kubeadm-init.out #<-- Match the IP range from the Calico config file
+	kubeadm init --apiserver-cert-extra-sans vagrant-k8s --apiserver-advertise-address $THIS_IP --control-plane-endpoint $CONTROL_PLANE_ENDPOINT --upload-certs --pod-network-cidr $POD_SUBNET | tee /root/kubeadm-init.out #<-- Match the IP range from the Calico config file
 
 	mkdir -p $HOME/.kube
 	sudo cp -i /etc/kubernetes/admin.conf $HOME/.kube/config
@@ -217,9 +216,23 @@ then
 	curl -sL https://run.solo.io/gloo/install  | sh
 	glooctl check
 
+	# Install haproxy ingress
+	# see https://www.haproxy.com/blog/use-helm-to-install-the-haproxy-kubernetes-ingress-controller/
+	# https://www.haproxy.com/blog/announcing-haproxy-2-3/
+	helm repo add haproxytech https://haproxytech.github.io/helm-charts
+	helm repo update
+	#helm install mycontroller haproxytech/kubernetes-ingress
+	helm install my-haproxy-controller haproxytech/kubernetes-ingress
+	helm list
+	# Update
+	# helm repo update
+	# helm upgrade mycontroller haproxytech/kubernetes-ingress
+	# Delete
+	# helm uninstall mycontroller
+
 fi
 echo "Finished provisioning $(hostname)!"
 if [[ $THIS_NUM -eq 1 && $NODE_TYPE == "master" ]]
 then
-	echo "View join tokens at /tmp/kubeadm-init.out on $(hostname)"
+	echo "View join tokens at /root/kubeadm-init.out on $(hostname)"
 fi
