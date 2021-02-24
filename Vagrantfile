@@ -10,9 +10,10 @@ Vagrant.configure("2") do |config|
   config.vm.synced_folder ".", "/vagrant", type: "rsync"
 
   $num_masters = 1
-  $num_workers = 1
-  $kube_subnet_start = "172.17.8"
-  $pod_subnet = "172.22.143.0/24"
+  $num_workers = 2
+  $kube_subnet_start = "192.168.20"
+  # You might run into issues if you change the pod_subnet
+  $pod_subnet = "10.244.0.0/16"
 
   # curl https://discovery.etcd.io/new?size=3
   $control_plane_endpoint = "#{$kube_subnet_start}.101"
@@ -23,6 +24,7 @@ Vagrant.configure("2") do |config|
       master.vm.hostname = "master-#{i}"
       ip = "#{$kube_subnet_start}.#{i+100}"
       master.vm.network "private_network", ip: ip
+      if (i == 1) then master.vm.network "forwarded_port", guest: 6443, host: 6443 end
       master.vm.provider "virtualbox" do |vb|
         vb.memory = "4096"
         vb.cpus = 2
