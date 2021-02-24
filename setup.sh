@@ -36,12 +36,13 @@ EOF
 
 
 cat <<EOF > /etc/sysconfig/kubelet
-KUBELET_EXTRA_ARGS=--cgroup-driver=systemd
+#KUBELET_EXTRA_ARGS=--cgroup-driver=systemd
+KUBELET_EXTRA_ARGS=--cgroup-driver=systemd --node-ip=$THIS_IP
 EOF
 
-dnf -y update --nobest && yum -y upgrade --nobest
+dnf -y update --nobest && dnf -y upgrade --nobest
 
-dnf install -y wget curl conntrack-tools vim net-tools telnet tcpdump bind-utils kmod nmap-ncat python3
+dnf install -y wget curl conntrack-tools vim net-tools telnet tcpdump bind-utils kmod nmap-ncat python3 git
 ln -s /bin/python3 /bin/python
 
 dnf install https://dl.fedoraproject.org/pub/epel/epel-release-latest-8.noarch.rpm -y
@@ -58,6 +59,8 @@ if [[ $NODE_TYPE == "master" ]]; then
 	firewall-cmd --permanent --add-port=2379-2380/tcp # etcd server client API; used by kube-apiserver, etcd
 	firewall-cmd --permanent --add-port=10251/tcp # kube-scheduler; used by self
 	firewall-cmd --permanent --add-port=10252/tcp #kube-controller-manager; used by self
+	# see https://stackoverflow.com/questions/61214151/inter-pods-communication-with-dns-name-not-working-in-kubernetes
+	firewall-cmd --add-masquerade --permanent
 fi
 # worker nodes
 firewall-cmd --permanent --add-port=30000-32767/tcp # NodePort services, used by all
@@ -157,30 +160,45 @@ systemctl start kubelet
 source <(kubectl completion bash)
 echo "source <(kubectl completion bash)" >> ~/.bashrc
 echo "source <(kubeadm completion bash)" >> ~/.bashrc
-echo "export PATH=$HOME/.gloo/bin:/usr/local/sbin:$PATH" >> ~/.bashrc
-export PATH=$HOME/.gloo/bin:/usr/local/bin:$PATH
+echo "export PATH=$HOME/.gloo/bin:/usr/local/bin:/usr/local/sbin:$PATH" >> ~/.bashrc
+export PATH=$HOME/.gloo/bin:/usr/local/bin:/usr/local/sbin:$PATH
 
 # INITIAL MASTER SETUP ONLY
 if [[ $THIS_NUM -eq 1 && $NODE_TYPE == "master" ]]
 then
 	# kubeadm init --help for more information
-	kubeadm init --apiserver-cert-extra-sans vagrant-k8s --apiserver-advertise-address $THIS_IP --control-plane-endpoint $CONTROL_PLANE_ENDPOINT --upload-certs --pod-network-cidr $POD_SUBNET | tee /root/kubeadm-init.out #<-- Match the IP range from the Calico config file
+	kubeadm init --apiserver-cert-extra-sans $THIS_IP --apiserver-advertise-address $THIS_IP --control-plane-endpoint $CONTROL_PLANE_ENDPOINT --upload-certs --pod-network-cidr $POD_SUBNET | tee /root/kubeadm-init.out #<-- Match the IP range from the Calico config file
 
 	mkdir -p $HOME/.kube
-	sudo cp -i /etc/kubernetes/admin.conf $HOME/.kube/config
+	sudo cp /etc/kubernetes/admin.conf $HOME/.kube/config
 	sudo chown $(id -u):$(id -g) $HOME/.kube/config
 
 	# untaint the node so that we can schedule pods
 	#kubectl taint nodes master-1 node.kubernetes.io/not-ready:NoSchedule-
 	kubectl taint nodes --all node.kubernetes.io/not-ready-
+	# Allows prometheus to be deployed (via Lens)
+	kubectl taint node master-1 node-role.kubernetes.io/master:NoSchedule-
 	kubectl describe node | grep -i taint
 
-	# Setup Calico
+	# Setup Canal
 	# see https://docs.projectcalico.org/getting-started/kubernetes/self-managed-onprem/onpremises#install-calico-with-kubernetes-api-datastore-50-nodes-or-less
+	export CNI_PLUGIN=calico
 	wget https://docs.projectcalico.org/archive/v3.18/manifests/calico.yaml
-	sed -i "s/# - name: CALICO_IPV4POOL_CIDR/- name: CALICO_IPV4POOL_CIDR/g" calico.yaml
-	sed -i "s/#   value: \"192.168.0.0\/16\"/  value: \"${POD_SUBNET/\//\/}\"/g" calico.yaml
-	kubectl apply -f calico.yaml
+	#wget https://docs.projectcalico.org/v3.18/manifests/${CNI_PLUGIN}.yaml
+	sed -i "s/# - name: CALICO_IPV4POOL_CIDR/- name: CALICO_IPV4POOL_CIDR/g" ${CNI_PLUGIN}.yaml
+	sed -i "s/#   value: \"192.168.0.0\/16\"/  value: \"${POD_SUBNET/\//\\/}\"/g" ${CNI_PLUGIN}.yaml
+	kubectl apply -f ${CNI_PLUGIN}.yaml
+
+	#sed 's/canal_iface: ""/canal_iface: "eth1"/' -i ${CNI_PLUGIN}.yaml
+
+	# Make sure the CNI_PLUGIN uses the correct network interface
+	sleep 10
+	kubectl set env daemonset/calico-node -n kube-system IP_AUTODETECTION_METHOD=interface=eth1
+	# Delete the calico-node pods for the changes to take effect
+	for pod in $(kubectl get pods -n kube-system -l k8s-app=calico-node --no-headers=true | awk '{print $1}'); do kubectl delete pod -n kube-system $pod; done
+
+	# And the DNS too
+	for pod in $(kubectl get pods -n kube-system -l k8s-app=kube-dns --no-headers=true | awk '{print $1}'); do kubectl delete pod -n kube-system $pod; done
 
 	# Install kubectl calicoctl plugin
 	cd /usr/local/bin
@@ -203,6 +221,7 @@ then
 	    sleep 10
 	done
 	kubectl taint nodes $(hostname) node.kubernetes.io/not-ready:NoSchedule
+	kubectl taint nodes $(hostname) node-role.kubernetes.io/master:NoSchedule-
 
 	## Install Gloo ingress and API gateway
 	## NOTE: Currently not working in Vagrant for some reason, so disabled
@@ -220,17 +239,35 @@ then
 	# Install haproxy ingress
 	# see https://www.haproxy.com/blog/use-helm-to-install-the-haproxy-kubernetes-ingress-controller/
 	# https://www.haproxy.com/blog/announcing-haproxy-2-3/
-	helm repo add haproxytech https://haproxytech.github.io/helm-charts
-	helm repo update
-	#helm install mycontroller haproxytech/kubernetes-ingress
-	helm install my-haproxy-controller haproxytech/kubernetes-ingress
-	helm list
+	# helm repo add haproxytech https://haproxytech.github.io/helm-charts
+	# helm repo update
+	# #helm install mycontroller haproxytech/kubernetes-ingress
+	# helm install my-haproxy-controller haproxytech/kubernetes-ingress
+	# helm list
 	# Update
 	# helm repo update
 	# helm upgrade mycontroller haproxytech/kubernetes-ingress
 	# Delete
 	# helm uninstall mycontroller
 
+	# Install Prometheues
+	# helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+	# helm repo update
+	# helm install my-prometheus prometheus-community/prometheus
+
+	# Deploy dashboard
+	#kubectl apply -f https://raw.githubusercontent.com/kubernetes/dashboard/v2.0.0/aio/deploy/recommended.yaml
+	kubectl apply -f https://raw.githubusercontent.com/kubernetes/dashboard/master/aio/deploy/recommended.yaml
+
+	# Install metrics server
+	kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
+	# kubectl -n kube-system edit deploy metrics-server`
+	# add to args:	
+        # - --kubelet-insecure-tls
+	# edit:
+        # - --kubelet-preferred-address-types=InternalIP
+	# add below dnsPolicy:
+	# hostNetwork: true
 fi
 echo "Finished provisioning $(hostname)!"
 if [[ $THIS_NUM -eq 1 && $NODE_TYPE == "master" ]]
