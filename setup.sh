@@ -17,10 +17,6 @@ NODE_TYPE=$8
 KUBERNETES_VERSION=1.20.4
 DOCKER_VERSION=19.03.15-3.el8
 
-# change time zone
-#cp /usr/share/zoneinfo/Asia/Shanghai /etc/localtime
-#timedatectl set-timezone Asia/Shanghai
-
 # Setup DNF repos
 dnf config-manager --add-repo=https://download.docker.com/linux/centos/docker-ce.repo
 
@@ -45,6 +41,7 @@ dnf -y update --nobest && dnf -y upgrade --nobest
 dnf install -y wget curl conntrack-tools vim net-tools telnet tcpdump bind-utils kmod nmap-ncat python3 git
 ln -s /bin/python3 /bin/python
 
+# The packages below are just for monitoring
 dnf install https://dl.fedoraproject.org/pub/epel/epel-release-latest-8.noarch.rpm -y
 dnf install htop -y
 
@@ -223,37 +220,116 @@ then
 	kubectl taint nodes $(hostname) node.kubernetes.io/not-ready:NoSchedule
 	kubectl taint nodes $(hostname) node-role.kubernetes.io/master:NoSchedule-
 
-	## Install Gloo ingress and API gateway
-	## NOTE: Currently not working in Vagrant for some reason, so disabled
-	## see https://medium.com/solo-io/api-gateways-are-going-through-an-identity-crisis-d1d833a313d7
-	## https://docs.solo.io/gloo-edge/latest/installation/gateway/kubernetes/#verify-your-installation
-	## https://docs.solo.io/gloo-edge/latest/guides/traffic_management/hello_world/
-	# helm repo add gloo https://storage.googleapis.com/solo-public-helm
-	# helm repo update
-	# kubectl create namespace gloo-system
-	# helm install gloo gloo/gloo --namespace gloo-system
-	# kubectl get all -n gloo-system
-	# curl -sL https://run.solo.io/gloo/install  | sh
-	# glooctl check
 
-	# Install haproxy ingress
-	# see https://www.haproxy.com/blog/use-helm-to-install-the-haproxy-kubernetes-ingress-controller/
-	# https://www.haproxy.com/blog/announcing-haproxy-2-3/
-	# helm repo add haproxytech https://haproxytech.github.io/helm-charts
-	# helm repo update
-	# #helm install mycontroller haproxytech/kubernetes-ingress
-	# helm install my-haproxy-controller haproxytech/kubernetes-ingress
-	# helm list
-	# Update
-	# helm repo update
-	# helm upgrade mycontroller haproxytech/kubernetes-ingress
-	# Delete
-	# helm uninstall mycontroller
+	# Install ingress-nginx
+	kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v0.34.1/deploy/static/provider/baremetal/deploy.yaml # https://github.com/kubernetes/ingress-nginx/tree/master/deploy/static/provider/baremetal
+	
+	# see https://github.com/kubernetes/ingress-nginx/issues/5401, https://stackoverflow.com/questions/44519980/assign-external-ip-to-a-kubernetes-service, https://www.digitalocean.com/community/tutorials/how-to-set-up-an-nginx-ingress-with-cert-manager-on-digitalocean-kubernetes https://github.com/kubernetes/ingress-nginx/issues/6655
+	# there is some kind of bug? This needs to be deleted, see github issues above
+	kubectl delete -A ValidatingWebhookConfiguration ingress-nginx-admission
+	
+	# https://github.com/ansilh/kubernetes-the-hardway-virtualbox/blob/master/18.Ingress-Controller-using-NGINX.md/
+	
+	# The externalIPs list needs to be updated whenever new nodes are added
+	# TODO: add the max IP range from script arg variable
+	kubectl patch svc ingress-nginx-controller -n ingress-nginx -p '{"spec":{"externalIPs":["192.168.20.101", "192.168.20.201", "192.168.20.202"]}}'
+	#kubectl patch svc ingress-nginx-controller -n ingress-nginx -p '{"spec":{"type":"NodePort"}}'
+	
 
-	# Install Prometheues
-	# helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
-	# helm repo update
-	# helm install my-prometheus prometheus-community/prometheus
+	# note: service replicas need to be 2 for some reason
+	# setup 'echo1' service
+	kubectl apply -f - <<EOF
+apiVersion: v1
+kind: Service
+metadata:
+  name: echo1
+spec:
+  ports:
+  - port: 80
+    targetPort: 5678
+  selector:
+    app: echo1
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: echo1
+spec:
+  selector:
+    matchLabels:
+      app: echo1
+  replicas: 2
+  template:
+    metadata:
+      labels:
+        app: echo1
+    spec:
+      containers:
+      - name: echo1
+        image: hashicorp/http-echo
+        args:
+        - "-text=echo1"
+        ports:
+        - containerPort: 5678
+EOF
+
+	# echo2
+	kubectl apply -f - <<EOF
+apiVersion: v1
+kind: Service
+metadata:
+  name: echo2
+spec:
+  ports:
+  - port: 80
+    targetPort: 5678
+  selector:
+    app: echo2
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: echo2
+spec:
+  selector:
+    matchLabels:
+      app: echo2
+  replicas: 2
+  template:
+    metadata:
+      labels:
+        app: echo2
+    spec:
+      containers:
+      - name: echo2
+        image: hashicorp/http-echo
+        args:
+        - "-text=echo2"
+        ports:
+        - containerPort: 5678
+EOF   
+        
+	# echo_ingress
+	kubectl apply -f - <<EOF
+apiVersion: networking.k8s.io/v1beta1
+kind: Ingress
+metadata:
+  name: echo-ingress
+spec:
+  rules:
+  - host: echo1.example.com
+    http:
+      paths:
+      - backend:
+          serviceName: echo1
+          servicePort: 80
+  - host: echo2.example.com
+    http:
+      paths:
+      - backend:
+          serviceName: echo2
+          servicePort: 80
+EOF
 
 	# Deploy dashboard
 	#kubectl apply -f https://raw.githubusercontent.com/kubernetes/dashboard/v2.0.0/aio/deploy/recommended.yaml
