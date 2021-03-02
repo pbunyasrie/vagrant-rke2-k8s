@@ -12,8 +12,6 @@ Vagrant.configure("2") do |config|
   $num_masters = 1
   $num_workers = 2
   $kube_subnet_start = "192.168.20"
-  # You might run into issues if you change the pod_subnet
-  $pod_subnet = "10.244.0.0/16"
 
   # curl https://discovery.etcd.io/new?size=3
   $control_plane_endpoint = "#{$kube_subnet_start}.101"
@@ -30,7 +28,8 @@ Vagrant.configure("2") do |config|
         vb.cpus = 2
         vb.name = "master-#{i}"
       end
-      master.vm.provision "shell", path: "setup.sh", args: [i, ip, $kube_subnet_start, $pod_subnet, $control_plane_endpoint, $num_masters, $num_workers, "master"]
+      master.vm.provision "shell", path: "setup-rke2.sh", args: [i, ip, "master"]
+      #master.vm.provision "shell", path: "setup-vanilla.sh", args: [i, ip, $kube_subnet_start, $pod_subnet, $control_plane_endpoint, $num_masters, $num_workers, "master"]
     end
   end
 
@@ -45,7 +44,8 @@ Vagrant.configure("2") do |config|
         vb.cpus = 2
         vb.name = "worker-#{i}"
       end
-      worker.vm.provision "shell", path: "setup.sh", args: [i, ip, $kube_subnet_start, $pod_subnet, $control_plane_endpoint, $num_masters, $num_workers, "node"]
+      worker.vm.provision "shell", path: "setup-rke2.sh", args: [i, ip, "node"]
+      #worker.vm.provision "shell", path: "setup-vanilla.sh", args: [i, ip, $kube_subnet_start, $pod_subnet, $control_plane_endpoint, $num_masters, $num_workers, "node"]
     end
   end
 

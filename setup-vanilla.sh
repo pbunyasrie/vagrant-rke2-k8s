@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 
+# This is for a vanilla setup of K8S. Not recommended.
+
 # REFERENCE: https://www.tecmint.com/install-a-kubernetes-cluster-on-centos-8/
 # https://pushpanel.io/2019/install-a-master-kubernetes-cluster-on-centos-8/
 # https://kubernetes.io/blog/2019/03/15/kubernetes-setup-using-ansible-and-vagrant/
@@ -14,8 +16,25 @@ MASTERS=$6
 WORKERS=$7
 NODE_TYPE=$8
 
-KUBERNETES_VERSION=1.20.4
+KUBERNETES_VERSION=1.20.0 # an older version is required to run Rancher
 DOCKER_VERSION=19.03.15-3.el8
+
+declare -a ip_list=()
+get_ip_list () {
+
+        for i in $(seq 101 $num_masters); do
+                list+=(192.160.20.$i)
+        done
+
+        for i in $(seq 201 $num_workers); do
+                list+=(192.160.20.$i)
+        done
+
+        ip_list="$(printf ",\"%s\"" "${list[@]}" | cut -c2- | sed -e 's/\"/\\\"/g')"
+        #ip_list=$( IFS=$'\n'; echo "${list[*]}" )
+
+}
+get_ip_list
 
 # Setup DNF repos
 dnf config-manager --add-repo=https://download.docker.com/linux/centos/docker-ce.repo
@@ -173,8 +192,7 @@ then
 	# untaint the node so that we can schedule pods
 	#kubectl taint nodes master-1 node.kubernetes.io/not-ready:NoSchedule-
 	kubectl taint nodes --all node.kubernetes.io/not-ready-
-	# Allows prometheus to be deployed (via Lens)
-	kubectl taint node master-1 node-role.kubernetes.io/master:NoSchedule-
+	kubectl taint node master-1 node-role.kubernetes.io/master:NoSchedule
 	kubectl describe node | grep -i taint
 
 	# Setup Canal
@@ -224,17 +242,29 @@ then
 	# Install ingress-nginx
 	kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v0.34.1/deploy/static/provider/baremetal/deploy.yaml # https://github.com/kubernetes/ingress-nginx/tree/master/deploy/static/provider/baremetal
 	
-	# see https://github.com/kubernetes/ingress-nginx/issues/5401, https://stackoverflow.com/questions/44519980/assign-external-ip-to-a-kubernetes-service, https://www.digitalocean.com/community/tutorials/how-to-set-up-an-nginx-ingress-with-cert-manager-on-digitalocean-kubernetes https://github.com/kubernetes/ingress-nginx/issues/6655
+	# see https://github.com/kubernetes/ingress-nginx/issues/5401
+  # https://stackoverflow.com/questions/44519980/assign-external-ip-to-a-kubernetes-service
+  # https://www.digitalocean.com/community/tutorials/how-to-set-up-an-nginx-ingress-with-cert-manager-on-digitalocean-kubernetes
+  # https://github.com/kubernetes/ingress-nginx/issues/6655
 	# there is some kind of bug? This needs to be deleted, see github issues above
 	kubectl delete -A ValidatingWebhookConfiguration ingress-nginx-admission
 	
 	# https://github.com/ansilh/kubernetes-the-hardway-virtualbox/blob/master/18.Ingress-Controller-using-NGINX.md/
 	
 	# The externalIPs list needs to be updated whenever new nodes are added
-	# TODO: add the max IP range from script arg variable
-	kubectl patch svc ingress-nginx-controller -n ingress-nginx -p '{"spec":{"externalIPs":["192.168.20.101", "192.168.20.201", "192.168.20.202"]}}'
+	# kubectl patch svc ingress-nginx-controller -n ingress-nginx -p '{"spec":{"externalIPs":["192.168.20.101", "192.168.20.201", "192.168.20.202"]}}'
+	echo kubectl patch svc ingress-nginx-controller -n ingress-nginx -p "{\"spec\":{\"externalIPs\":[${ip_list}]}}"
+	kubectl patch svc ingress-nginx-controller -n ingress-nginx -p "{\"spec\":{\"externalIPs\":[${ip_list}]}}"
 	#kubectl patch svc ingress-nginx-controller -n ingress-nginx -p '{"spec":{"type":"NodePort"}}'
-	
+
+	# Install Rancher
+	helm repo add rancher-stable https://releases.rancher.com/server-charts/stable
+	kubectl create namespace cattle-system
+	helm install rancher rancher-stable/rancher \
+  --namespace cattle-system \
+  --set hostname=rancher.my.org
+	# Wait for Rancher to be rolled out
+	kubectl -n cattle-system rollout status deploy/rancher
 
 	# note: service replicas need to be 2 for some reason
 	# setup 'echo1' service
@@ -246,7 +276,7 @@ metadata:
 spec:
   ports:
   - port: 80
-    targetPort: 5678
+    targetPort: 80
   selector:
     app: echo1
 ---
@@ -266,11 +296,9 @@ spec:
     spec:
       containers:
       - name: echo1
-        image: hashicorp/http-echo
-        args:
-        - "-text=echo1"
+        image: strm/helloworld-http 
         ports:
-        - containerPort: 5678
+        - containerPort: 80
 EOF
 
 	# echo2
@@ -315,6 +343,9 @@ apiVersion: networking.k8s.io/v1beta1
 kind: Ingress
 metadata:
   name: echo-ingress
+  annotations:
+    # use the shared ingress-nginx
+    kubernetes.io/ingress.class: "nginx"
 spec:
   rules:
   - host: echo1.example.com
