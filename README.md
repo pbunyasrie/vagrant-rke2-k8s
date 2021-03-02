@@ -1,16 +1,16 @@
-# Vagrant Kubernetes
-Sets up a vanilla Kubernetes environment using kubeadm:
+# Vagrant RKE2 (Kubernetes)
+Sets up a multi-node RKE2 Kubernetes environment in Vagrant, complete with Rancher. All nodes run CentOS 8.
 
+The cluster consists of:
 - 1 master
 - 2 workers
 
-All running on CentOS 8.
+Features:
+- CNI: Canal
+- Ingress: ingress-nginx
 
 Additionally sets up:
-
-- calico (CNI)
-- ingress-nginx
-- helm
+- Rancher 2.5 via helm
 
 # Setup
 ```
@@ -22,34 +22,33 @@ Once all of the servers have been setup, SSH into the master:
 vagrant ssh master-1
 ```
 
-Obtain the worker join command from `/root/kubeadm-init.out`, which we will run on each worker. Example:
-```
-$ tail -n2 /root/kubeadm-init.out
-kubeadm join 192.168.20.101:6443 --token xx.yyzz \
-    --discovery-token-ca-cert-hash sha256:xxyyzz
-```
+Obtain the token from `/var/lib/rancher/rke2/server/node-token`, which we will use to configure on each worker.
 
-Then, SSH into each worker and run the worker join command from above.
+Then, SSH into each worker and configure `etc/rancher/rke2/config.yaml` with the token from above.
 ```
 vagrant ssh worker-1
 ```
 
-# Production
-Because dnsmasq is used in /etc/resolv.conf in production, the nameserver points to 127.0.0.1. CoreDNS needs to be updated to forward.
-```
-kubectl -n kube-system edit configmap/coredns
-```
-
-Then change
-```
-forward . /etc/resolv.conf {
-```
-
-to
-
-```
-forward . <master ip> {
-```
 
 # TODO
 - Look into automating worker joining during provisioning process, via NFS 
+
+# Troubleshooting
+## DNS
+You can use dnsutils to ping pods from node to node.
+```
+kubectl apply -f https://k8s.io/examples/admin/dns/dnsutils.yaml
+kubectl exec -i -t dnsutils -- nslookup kubernetes.default
+```
+
+# References
+- https://www.jeffgeerling.com/blog/2019/debugging-networking-issues-multi-node-kubernetes-on-virtualbox
+
+## RKE2
+- https://docs.rke2.io/install/quickstart/
+- https://docs.rke2.io/install/install_options/server_config/
+- https://docs.rke2.io/install/install_options/agent_config/
+- https://github.com/rancher/rke2
+
+## Rancher
+- https://rancher.com/docs/rancher/v2.x/en/installation/install-rancher-on-k8s/#2-add-the-helm-chart-repository
